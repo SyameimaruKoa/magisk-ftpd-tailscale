@@ -7,7 +7,7 @@
     TAIL_IP=""
 
     while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-        # tailscaleコマンド、またはipコマンドでIP取得を試みるのじゃ
+    # tailscaleコマンド、またはipコマンドでIP取得を試みるのじゃ
         TAIL_IP=$(tailscale ip -4 2>/dev/null)
         if [ -z "$TAIL_IP" ]; then
             TAIL_IP=$(ip -4 addr show tailscale0 2>/dev/null | grep inet | awk '{print $2}' | cut -d/ -f1)
@@ -21,10 +21,9 @@
         ATTEMPT=$((ATTEMPT + 1))
         sleep 5
     done
+    # 普段使い用（ポート21 -> 内部ストレージ）
+    busybox tcpsvd -vE $TAIL_IP 21 busybox ftpd -w -A /storage/emulated/0 > /dev/null 2>&1 &
 
-# 無事にTailscaleのIPが確保できたら、ポート21で匿名FTPを起動じゃ！
-# -A を追加して、パスワード要求を完全に無視させるのじゃ！
-    if [ -n "$TAIL_IP" ]; then
-        busybox tcpsvd -vE $TAIL_IP 21 busybox ftpd -w -A / > /dev/null 2>&1
-    fi
+    # システムいじり用（ポート2121 -> ルート全体）
+    busybox tcpsvd -vE $TAIL_IP 2121 busybox ftpd -w -A / > /dev/null 2>&1 &
 ) &
