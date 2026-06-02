@@ -1,6 +1,9 @@
 #!/data/adb/magisk/busybox sh
 export ASH_STANDALONE=1
 
+# tcpsvdに渡すための直通番号（フルパス）を定義じゃ
+    BBOX="/data/adb/magisk/busybox"
+
 (
     MAX_ATTEMPTS=12
     ATTEMPT=0
@@ -13,8 +16,9 @@ export ASH_STANDALONE=1
         fi
 
         if [ -n "$TAIL_IP" ]; then
-            tcpsvd -vE $TAIL_IP 21 ftpd -w -A /storage/emulated/0 > /dev/null 2>&1 &
-            tcpsvd -vE $TAIL_IP 2121 ftpd -w -A / > /dev/null 2>&1 &
+            # 最初のtcpsvdは省略可能だが、後ろのftpdには必ず$BBOXをつけるのじゃ！
+            tcpsvd -vE $TAIL_IP 21 $BBOX ftpd -w -A /storage/emulated/0 > /dev/null 2>&1 &
+            tcpsvd -vE $TAIL_IP 2121 $BBOX ftpd -w -A / > /dev/null 2>&1 &
             break
         fi
 
