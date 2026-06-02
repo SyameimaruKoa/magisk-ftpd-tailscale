@@ -1,7 +1,5 @@
-#!/system/bin/sh
-
-# Magisk内蔵のBusyboxをフルパスで変数に格納するのじゃ
-    BBOX="/data/adb/magisk/busybox"
+#!/data/adb/magisk/busybox sh
+export ASH_STANDALONE=1
 
 (
     MAX_ATTEMPTS=12
@@ -15,8 +13,8 @@
         fi
 
         if [ -n "$TAIL_IP" ]; then
-            $BBOX tcpsvd -vE $TAIL_IP 21 $BBOX ftpd -w -A /storage/emulated/0 > /dev/null 2>&1 &
-            $BBOX tcpsvd -vE $TAIL_IP 2121 $BBOX ftpd -w -A / > /dev/null 2>&1 &
+            tcpsvd -vE $TAIL_IP 21 ftpd -w -A /storage/emulated/0 > /dev/null 2>&1 &
+            tcpsvd -vE $TAIL_IP 2121 ftpd -w -A / > /dev/null 2>&1 &
             break
         fi
 
