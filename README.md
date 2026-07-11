@@ -9,6 +9,8 @@ Android 9,15でテスト済み
 > 理由はすべてのフォルダをファイルとして認識するから。使い物にならないってーの。<br>
 > どうしてもその用途で使いたかったらMiXとかのファイラーでプロキシして再生
 
+ファイルサーバーとしてこれから使うつもりなら、これを使わずにTailscaleのTailDriveを使った方が良いと思います。TailDriveは神
+
 ## 前提
 
 - [Magisk](https://github.com/topjohnwu/Magisk)
