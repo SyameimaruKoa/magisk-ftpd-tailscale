@@ -25,7 +25,7 @@ Android 9,15でテスト済み
 
 ```sh
 su -c '
-cd /data/adb/post-fs-data.d/ && /data/adb/magisk/busybox wget https://gist.github.com/SyameimaruKoa/6aec1fdbd347602fb0621b10c90a63a4/raw/fix_tun.sh && \
+cd /data/adb/post-fs-data.d/ && /data/adb/magisk/busybox wget https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/raw/refs/heads/main/fix_tun.sh && \
 chmod 755 /data/adb/post-fs-data.d/fix_tun.sh
 '
 ```
@@ -38,7 +38,7 @@ chmod 755 /data/adb/post-fs-data.d/fix_tun.sh
 su -c '
 cd /data/adb/service.d/ && \
 rm ftpd.sh android-ftpd.sh android-ftpd-tailscale.sh ; \
-/data/adb/magisk/busybox wget https://gist.github.com/SyameimaruKoa/6aec1fdbd347602fb0621b10c90a63a4/raw/android-ftpd-tailscale.sh && \
+/data/adb/magisk/busybox wget https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/raw/refs/heads/main/android-ftpd-tailscale.sh && \
 chmod 755 /data/adb/service.d/android-ftpd-tailscale.sh
 '
 ```
@@ -52,7 +52,7 @@ chmod 755 /data/adb/service.d/android-ftpd-tailscale.sh
 su -c '
 cd /data/adb/service.d/ && \
 rm android-ftpd_localhost.sh ; \
-/data/adb/magisk/busybox wget https://gist.github.com/SyameimaruKoa/6aec1fdbd347602fb0621b10c90a63a4/raw/android-ftpd_localhost.sh && \
+/data/adb/magisk/busybox wget https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/raw/refs/heads/main/android-ftpd_localhost.sh && \
 chmod 755 /data/adb/service.d/android-ftpd_localhost.sh
 '
 ```
