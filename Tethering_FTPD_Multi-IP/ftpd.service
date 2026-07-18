@@ -1,0 +1,93 @@
+#!/system/bin/sh
+# 下にヘルプがあるのじゃ
+
+MODDIR=${0%/*}
+BBOX="/data/adb/magisk/busybox"
+TARGET_IPS="192.168.42.129 192.168.43.1 192.168.44.1"
+PID_FILE="$MODDIR/ftpd_monitor.pid"
+
+start() {
+    # すでに監視ループが動いているなら何もしないぞ
+    if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
+        return 0
+    fi
+
+    # IPアドレスの付与を監視するループをバックグラウンドで走らせるのじゃ
+    (
+        echo $$ > "$PID_FILE"
+        # IPが見つからなかった回数を数えるカウンタじゃ
+        no_ip_count=0
+
+        while true; do
+            ip_found=false
+            for IP in $TARGET_IPS; do
+                if $BBOX ip -4 addr show 2>/dev/null | $BBOX grep -q "$IP"; then
+                    ip_found=true
+                    if ! $BBOX ps -ef | $BBOX grep tcpsvd | $BBOX grep "$IP" | $BBOX grep -q " 21 "; then
+                        $BBOX tcpsvd -vE $IP 21 $BBOX ftpd -w -A /storage/emulated/0 > /dev/null 2>&1 &
+                        $BBOX tcpsvd -vE $IP 2121 $BBOX ftpd -w -A / > /dev/null 2>&1 &
+                    fi
+                else
+                    for pid in $($BBOX ps -ef | $BBOX grep tcpsvd | $BBOX grep "$IP" | $BBOX awk '{print $2}'); do
+                        kill -9 $pid 2>/dev/null
+                    done
+                fi
+            done
+
+            # どれか1つでもIPが存在していればカウンタをリセットするぞ
+            if [ "$ip_found" = true ]; then
+                no_ip_count=0
+            else
+                # どのIPも存在しない場合、カウントアップじゃ
+                no_ip_count=$((no_ip_count + 1))
+                # 3回（約30秒）連続で見つからなければ、モジュール自身を無効化してループを抜けるぞ
+                if [ "$no_ip_count" -ge 3 ]; then
+                    touch "$MODDIR/disable"
+                    break
+                fi
+            fi
+            sleep 10
+        done
+    ) &
+}
+
+stop() {
+    # IP監視ループのプロセスを止めるぞ
+    if [ -f "$PID_FILE" ]; then
+        kill -9 $(cat "$PID_FILE") 2>/dev/null
+        rm -f "$PID_FILE"
+    fi
+
+    # 起動してしまったFTPのプロセスも全て抹殺じゃ
+    for IP in $TARGET_IPS; do
+        for pid in $($BBOX ps -ef | $BBOX grep tcpsvd | $BBOX grep "$IP" | $BBOX awk '{print $2}'); do
+            kill -9 $pid 2>/dev/null
+        done
+    done
+}
+
+show_help() {
+    echo "Usage: $0 [OPTIONS] COMMAND"
+    echo ""
+    echo "Commands:"
+    echo "  start       FTPデーモンとIP監視ループを起動する"
+    echo "  stop        FTPデーモンとIP監視ループを停止する"
+    echo ""
+    echo "Options:"
+    echo "  -h, --help  このヘルプメッセージを表示する"
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    -h|--help|"")
+        show_help
+        ;;
+    *)
+        show_help
+        ;;
+esac

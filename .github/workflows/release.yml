@@ -1,0 +1,46 @@
+name: Build and Release Magisk Module
+
+on:
+    push:
+        branches:
+            - main
+            - master
+        paths:
+            - 'Tethering_FTPD_Multi-IP/**'
+
+jobs:
+    build-and-release:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Extract version and build ZIP
+              run: |
+                  # module.propからバージョン情報を抽出するのじゃ
+                  VERSION=$(grep '^version=' Tethering_FTPD_Multi-IP/module.prop | cut -d= -f2)
+                  if [ -z "$VERSION" ]; then
+                      VERSION="v1.0"
+                  fi
+                  # 環境変数として後続のステップに渡すぞ
+                  echo "VERSION=$VERSION" >> $GITHUB_ENV
+                  
+                  # ZIPファイルの作成じゃ
+                  # Magiskの仕様に合わせて、フォルダの中に入ってから中身だけを圧縮するのじゃ
+                  cd Tethering_FTPD_Multi-IP
+                  zip -r9 ../Tethering_FTPD_Multi-IP.zip .
+                  cd ..
+
+            - name: Create Release
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  # コミットハッシュの先頭7文字を使ってタグを被らせないようにするぞ
+                  TAG="${VERSION}-${GITHUB_SHA::7}"
+                  # ghコマンドで自動的にリリースを作成してZIPをブチ込むのじゃ
+                  gh release create "$TAG" Tethering_FTPD_Multi-IP.zip \
+                      --title "Tethering FTPD Multi-IP $VERSION" \
+                      --notes "Automated release triggered by changes in Tethering_FTPD_Multi-IP folder."
