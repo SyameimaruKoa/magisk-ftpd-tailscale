@@ -1,6 +1,10 @@
 #!/system/bin/sh
 MODDIR=${0%/*}
 
+# 起動時に必ず実行権限を付与してやるのじゃ！
+chmod 755 "$MODDIR/ftpd.service"
+chmod 755 "$MODDIR/ftpd.inotify"
+
 # モジュールが有効な状態であれば初期起動させておく
 if [ ! -f "$MODDIR/disable" ]; then
     "$MODDIR/ftpd.service" start
