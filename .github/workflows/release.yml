@@ -18,7 +18,7 @@ jobs:
             - name: Checkout repository
               uses: actions/checkout@v4
 
-- name: Extract version and build ZIP
+            - name: Extract version and build ZIP
               run: |
                   # module.propからバージョン情報を抽出して、見えない改行や空白を取り除くのじゃ！
                   VERSION=$(grep '^version=' Tethering_FTPD_Multi-IP/module.prop | cut -d= -f2 | tr -d '\r\n[:space:]')
