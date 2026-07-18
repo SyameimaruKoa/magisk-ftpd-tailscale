@@ -1,0 +1,15 @@
+#!/system/bin/sh
+MODDIR=$(dirname "$(realpath "$0")")
+events="$1"
+monitor_file="$3"
+
+# disableファイルの変更のみを検知する
+if [ "${monitor_file}" = "disable" ]; then
+    if [ "${events}" = "d" ]; then
+        # ファイルが削除された(d) = モジュール有効化
+        "$MODDIR/ftpd.service" start
+    elif [ "${events}" = "n" ]; then
+        # ファイルが新規作成された(n) = モジュール無効化
+        "$MODDIR/ftpd.service" stop
+    fi
+fi
