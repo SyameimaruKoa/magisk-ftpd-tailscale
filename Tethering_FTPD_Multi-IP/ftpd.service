@@ -6,6 +6,80 @@ BBOX="/data/adb/magisk/busybox"
 TARGET_IPS="192.168.42.129 192.168.43.1 192.168.44.1"
 PID_FILE="$MODDIR/ftpd_monitor.pid"
 
+match_ip_pattern() {
+    ip="$1"
+    pattern="$2"
+
+    [ -z "$ip" ] || [ -z "$pattern" ] && return 1
+
+    # ワイルドカード (* や x, X を正規展開パターンに変換)
+    wc_pattern=$(echo "$pattern" | tr 'xX' '*')
+
+    case "$ip" in
+        $wc_pattern) return 0 ;;
+    esac
+
+    # CIDR サブネット表記 (/24, /16 など)
+    case "$pattern" in
+        */*)
+            net_ip="${pattern%/*}"
+            prefix="${pattern#*/}"
+
+            o1=$(echo "$ip" | cut -d. -f1 2>/dev/null)
+            o2=$(echo "$ip" | cut -d. -f2 2>/dev/null)
+            o3=$(echo "$ip" | cut -d. -f3 2>/dev/null)
+            o4=$(echo "$ip" | cut -d. -f4 2>/dev/null)
+
+            n1=$(echo "$net_ip" | cut -d. -f1 2>/dev/null)
+            n2=$(echo "$net_ip" | cut -d. -f2 2>/dev/null)
+            n3=$(echo "$net_ip" | cut -d. -f3 2>/dev/null)
+            n4=$(echo "$net_ip" | cut -d. -f4 2>/dev/null)
+
+            [ -z "$o4" ] || [ -z "$n4" ] && return 1
+
+            ip_int=$(( (o1 << 24) + (o2 << 16) + (o3 << 8) + o4 ))
+            net_int=$(( (n1 << 24) + (n2 << 16) + (n3 << 8) + n4 ))
+
+            if [ "$prefix" -ge 0 ] 2>/dev/null && [ "$prefix" -le 32 ] 2>/dev/null; then
+                if [ "$prefix" -eq 0 ]; then
+                    mask=0
+                else
+                    mask=$(( (0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF ))
+                fi
+                if [ $(( ip_int & mask )) -eq $(( net_int & mask )) ]; then
+                    return 0
+                fi
+            fi
+            ;;
+    esac
+
+    return 1
+}
+
+update_status() {
+    state="$1"
+    active_ips="$2"
+    BASE_DESC="指定IP/サブネット接続時にFTPサーバー(Port 21:内部ストレージ / Port 2121:ルート)を自動起動・連動停止します。"
+
+    if [ "$state" = "RUNNING" ]; then
+        if [ -n "$active_ips" ]; then
+            STATUS_STR="[状態: 動作中 (公開中: $active_ips)]"
+        else
+            STATUS_STR="[状態: 動作中 (公開中: なし)]"
+        fi
+    else
+        STATUS_STR="[状態: 停止中]"
+    fi
+
+    if [ -f "$MODDIR/module.prop" ]; then
+        if [ -x "$BBOX" ]; then
+            $BBOX sed -i "s#^description=.*#description=${STATUS_STR} ${BASE_DESC}#" "$MODDIR/module.prop" 2>/dev/null
+        else
+            sed -i "s#^description=.*#description=${STATUS_STR} ${BASE_DESC}#" "$MODDIR/module.prop" 2>/dev/null
+        fi
+    fi
+}
+
 start() {
     # すでに監視ループが動いているなら何もしないぞ
     if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
@@ -19,20 +93,54 @@ start() {
         no_ip_count=0
 
         while true; do
+            # 端末に設定されている実IPv4アドレスを取得（ループバック除外）
+            SYS_IPS=$($BBOX ip -4 addr show 2>/dev/null | $BBOX grep "inet " | $BBOX awk '{print $2}' | $BBOX cut -d/ -f1 | $BBOX grep -v '^127\.')
+
+            active_ips=""
             ip_found=false
-            for IP in $TARGET_IPS; do
-                if $BBOX ip -4 addr show 2>/dev/null | $BBOX grep -q "$IP"; then
-                    ip_found=true
-                    if ! $BBOX ps -ef | $BBOX grep tcpsvd | $BBOX grep "$IP" | $BBOX grep -q " 21 "; then
-                        $BBOX tcpsvd -vE $IP 21 $BBOX ftpd -w -A /storage/emulated/0 > /dev/null 2>&1 &
-                        $BBOX tcpsvd -vE $IP 2121 $BBOX ftpd -w -A / > /dev/null 2>&1 &
+
+            for SYS_IP in $SYS_IPS; do
+                is_matched=false
+                for PAT in $TARGET_IPS; do
+                    if match_ip_pattern "$SYS_IP" "$PAT"; then
+                        is_matched=true
+                        break
                     fi
-                else
-                    for pid in $($BBOX ps -ef | $BBOX grep tcpsvd | $BBOX grep "$IP" | $BBOX awk '{print $2}'); do
+                done
+
+                if [ "$is_matched" = true ]; then
+                    ip_found=true
+                    if [ -z "$active_ips" ]; then
+                        active_ips="$SYS_IP"
+                    else
+                        active_ips="$active_ips, $SYS_IP"
+                    fi
+
+                    if ! $BBOX ps -ef | $BBOX grep tcpsvd | $BBOX grep "$SYS_IP" | $BBOX grep -q " 21 "; then
+                        $BBOX tcpsvd -vE $SYS_IP 21 $BBOX ftpd -w -A /storage/emulated/0 > /dev/null 2>&1 &
+                        $BBOX tcpsvd -vE $SYS_IP 2121 $BBOX ftpd -w -A / > /dev/null 2>&1 &
+                    fi
+                fi
+            done
+
+            # 対象から外れた（IP変更や切断等）古いtcpsvdプロセスを停止
+            for RUNNING_IP in $($BBOX ps -ef | $BBOX grep tcpsvd | $BBOX grep ftpd | $BBOX awk '{for(i=1;i<=NF;i++) if($i=="-vE") print $(i+1)}' | $BBOX sort -u); do
+                still_valid=false
+                for AM_IP in $(echo "$active_ips" | tr ',' ' '); do
+                    if [ "$RUNNING_IP" = "$AM_IP" ]; then
+                        still_valid=true
+                        break
+                    fi
+                done
+
+                if [ "$still_valid" = false ]; then
+                    for pid in $($BBOX ps -ef | $BBOX grep tcpsvd | $BBOX grep "$RUNNING_IP" | $BBOX awk '{print $2}'); do
                         kill -9 $pid 2>/dev/null
                     done
                 fi
             done
+
+            update_status "RUNNING" "$active_ips"
 
             # どれか1つでもIPが存在していればカウンタをリセットするぞ
             if [ "$ip_found" = true ]; then
@@ -42,6 +150,7 @@ start() {
                 no_ip_count=$((no_ip_count + 1))
                 # 3回（約30秒）連続で見つからなければ、モジュール自身を無効化してループを抜けるぞ
                 if [ "$no_ip_count" -ge 3 ]; then
+                    update_status "STOPPED"
                     touch "$MODDIR/disable"
                     break
                 fi
@@ -59,11 +168,11 @@ stop() {
     fi
 
     # 起動してしまったFTPのプロセスも全て抹殺じゃ
-    for IP in $TARGET_IPS; do
-        for pid in $($BBOX ps -ef | $BBOX grep tcpsvd | $BBOX grep "$IP" | $BBOX awk '{print $2}'); do
-            kill -9 $pid 2>/dev/null
-        done
+    for pid in $($BBOX ps -ef | $BBOX grep tcpsvd | $BBOX grep ftpd | $BBOX awk '{print $2}'); do
+        kill -9 $pid 2>/dev/null
     done
+
+    update_status "STOPPED"
 }
 
 show_help() {

@@ -7,6 +7,18 @@ on:
             - master
         paths:
             - 'Tethering_FTPD_Multi-IP/**'
+    workflow_dispatch:
+        inputs:
+            extra_ips:
+                description: '追加のターゲットIP（固定IP: 10.0.0.1、ワイルドカード: 192.168.43.*, 192.168.43.x、サブネット: 192.168.43.0/24 など指定可能）'
+                required: false
+                type: string
+                default: ''
+            draft:
+                description: 'ドラフト（非公開）リリースとして作成するかどうか'
+                required: false
+                type: boolean
+                default: true
 
 jobs:
     build-and-release:
@@ -17,6 +29,13 @@ jobs:
         steps:
             - name: Checkout repository
               uses: actions/checkout@v4
+
+            - name: Inject extra IPs if provided
+              if: ${{ github.event_name == 'workflow_dispatch' && inputs.extra_ips != '' }}
+              run: |
+                  EXTRA="${{ inputs.extra_ips }}"
+                  echo "Injecting extra IPs: $EXTRA"
+                  sed -i "s/^TARGET_IPS=\"/TARGET_IPS=\"${EXTRA} /" Tethering_FTPD_Multi-IP/ftpd.service
 
             - name: Extract version and build ZIP
               run: |
@@ -37,10 +56,18 @@ jobs:
             - name: Create Release
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  IS_DRAFT: ${{ (github.event_name == 'workflow_dispatch' && inputs.draft == true) && 'true' || 'false' }}
               run: |
                   # コミットハッシュの先頭7文字を使ってタグを被らせないようにするぞ
                   TAG="${VERSION}-${GITHUB_SHA::7}"
+                  
+                  DRAFT_FLAG=""
+                  if [ "$IS_DRAFT" = "true" ]; then
+                      DRAFT_FLAG="--draft"
+                  fi
+                  
                   # ghコマンドで自動的にリリースを作成してZIPをブチ込むのじゃ
                   gh release create "$TAG" Tethering_FTPD_Multi-IP.zip \
+                      $DRAFT_FLAG \
                       --title "Tethering FTPD Multi-IP $VERSION" \
                       --notes "Automated release triggered by changes in Tethering_FTPD_Multi-IP folder."
