@@ -1,0 +1,69 @@
+name: Build FTPD Tailscale Module
+
+on:
+    pull_request:
+        paths:
+            - 'module/**'
+            - '.github/workflows/ftpd-tailscale-module.yml'
+    push:
+        branches:
+            - main
+        paths:
+            - 'module/**'
+            - '.github/workflows/ftpd-tailscale-module.yml'
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ftpd-tailscale-${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    package:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Validate and package
+              run: |
+                  set -eu
+                  for file in module/*.sh; do
+                      sh -n "$file"
+                  done
+                  grep -q '^id=ftpd-tailscale$' module/module.prop
+                  cd module
+                  zip -qr ../FTPD-Tailscale.zip .
+                  cd ..
+                  unzip -t FTPD-Tailscale.zip
+                  unzip -p FTPD-Tailscale.zip module.prop | grep -q '^id=ftpd-tailscale$'
+
+            - name: Upload module ZIP artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: FTPD-Tailscale
+                  path: FTPD-Tailscale.zip
+
+            - name: Publish persistent download URL (main only)
+              if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  set -eu
+                  VERSION=$(sed -n 's/^version=//p' module/module.prop)
+                  echo "FTPD Tailscale ${VERSION} built from ${GITHUB_SHA}" > release-notes.txt
+                  if gh release view ftpd-tailscale-latest >/dev/null 2>&1; then
+                      gh release upload ftpd-tailscale-latest FTPD-Tailscale.zip --clobber
+                      gh release edit ftpd-tailscale-latest --title "FTPD Tailscale ${VERSION}" --notes-file release-notes.txt
+                  else
+                      gh release create ftpd-tailscale-latest FTPD-Tailscale.zip \
+                          --target "$GITHUB_SHA" \
+                          --title "FTPD Tailscale ${VERSION}" \
+                          --notes-file release-notes.txt \
+                          --latest=false
+                  fi
+              # gh release には書込み権限が必要。ジョブ側で付与。
+        permissions:
+            contents: write

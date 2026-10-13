@@ -1,0 +1,6 @@
+id=ftpd-tailscale
+name=FTPD Tailscale
+version=v1.0.0
+versionCode=1
+author=SyameimaruKoa
+description=[FTP: 起動待ち] FTP (Tailscale/localhost、21: 内部ストレージ / 2121: ルート)。アクションで一時停止・再開。
