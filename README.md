@@ -34,14 +34,14 @@ FTPは暗号化されないプロトコルです。Tailscaleモードでは、VP
 
 ## 1. CLIでダウンロード・インストール・更新
 
-`su`が使えるAndroid端末のシェル、または`adb shell`内で実行します。`FTPD-Tailscale.zip`は[このリポジトリの専用リリース](https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases/tag/ftpd-tailscale-latest)で配布します（リリース作成後に利用可能）。
+`su`が使えるAndroid端末のシェル、または`adb shell`内で実行します。`FTPD-Tailscale.zip`は[統合リリースのLatest](https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases/latest)で配布します。同じリリースにMulti-IP版の`Tethering_FTPD_Multi-IP.zip`も収録しています。両者は別々のモジュールZIPであり、必要な方だけをインストールしてください。
 
 ### ダウンロード（3つのroot管理方式共通）
 
 ```sh
 su -c '
     ZIP=/data/local/tmp/FTPD-Tailscale.zip
-    URL=https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases/download/ftpd-tailscale-latest/FTPD-Tailscale.zip
+    URL=https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases/latest/download/FTPD-Tailscale.zip
 
     if [ -x /data/adb/magisk/busybox ]; then
         BB=/data/adb/magisk/busybox
@@ -181,6 +181,15 @@ su -c 'rm -f /data/adb/modules/ftpd-tailscale/enable_tun_fix'
 読み込み用のファイルサーバーとしてこれから使うつもりなら、これを使わずにTailscaleのTailDriveを使った方が良いと思います。TailDriveは神。
 
 多数のファイルの書き込み等はあまり安定しないのでFTPを使うのは大いにあり。
+
+## 共通のGitHub Release
+
+- 更新があった場合は、Tailscale版とMulti-IP版のZIPを**同じリリースへまとめて**配布します。
+- 公開リリースにはGitHubの**Latest**指定を明示的に付けます。下記から両方のZIPを入手できます。
+- [最新の統合リリース](https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases/latest)
+- [Tailscale版の最新ZIP](https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases/latest/download/FTPD-Tailscale.zip)
+- [Multi-IP版の最新ZIP](https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases/latest/download/Tethering_FTPD_Multi-IP.zip)
+- ワークフローの手動実行ではMulti-IP版への追加IP設定、ドラフト作成を従来どおり利用できます。ドラフトにはLatest指定を付けません。
 
 ## その他の既存コード
 

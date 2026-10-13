@@ -1,4 +1,4 @@
-name: Build and Release Magisk Module
+name: Build and Release FTPD Modules
 
 on:
     push:
@@ -6,11 +6,20 @@ on:
             - main
             - master
         paths:
+            - 'module/**'
             - 'Tethering_FTPD_Multi-IP/**'
+            - '.github/workflows/release.yml'
+            - '.github/workflows/ftpd-tailscale-module.yml'
+    pull_request:
+        paths:
+            - 'module/**'
+            - 'Tethering_FTPD_Multi-IP/**'
+            - '.github/workflows/release.yml'
+            - '.github/workflows/ftpd-tailscale-module.yml'
     workflow_dispatch:
         inputs:
             extra_ips:
-                description: '追加のターゲットIP（固定IP: 10.0.0.1、ワイルドカード: 192.168.43.*, 192.168.43.x、サブネット: 192.168.43.0/24 など指定可能）'
+                description: '追加のターゲットIP（固定IP、ワイルドカード、CIDRサブネット対応。Multi-IP版のみに適用）'
                 required: false
                 type: string
                 default: ''
@@ -19,6 +28,10 @@ on:
                 required: false
                 type: boolean
                 default: true
+
+concurrency:
+    group: ftpd-modules-${{ github.ref }}
+    cancel-in-progress: false
 
 jobs:
     build-and-release:
@@ -30,44 +43,108 @@ jobs:
             - name: Checkout repository
               uses: actions/checkout@v4
 
-            - name: Inject extra IPs if provided
-              if: ${{ github.event_name == 'workflow_dispatch' && inputs.extra_ips != '' }}
-              run: |
-                  EXTRA="${{ inputs.extra_ips }}"
-                  echo "Injecting extra IPs: $EXTRA"
-                  sed -i "s/^TARGET_IPS=\"/TARGET_IPS=\"${EXTRA} /" Tethering_FTPD_Multi-IP/ftpd.service
-
-            - name: Extract version and build ZIP
-              run: |
-                  # module.propからバージョン情報を抽出して、見えない改行や空白を取り除くのじゃ！
-                  VERSION=$(grep '^version=' Tethering_FTPD_Multi-IP/module.prop | cut -d= -f2 | tr -d '\r\n[:space:]')
-                  if [ -z "$VERSION" ]; then
-                      VERSION="v1.0"
-                  fi
-                  # 環境変数として後続のステップに渡すぞ
-                  echo "VERSION=$VERSION" >> $GITHUB_ENV
-                  
-                  # ZIPファイルの作成じゃ
-                  # Magiskの仕様に合わせて、フォルダの中に入ってから中身だけを圧縮するのじゃ
-                  cd Tethering_FTPD_Multi-IP
-                  zip -r9 ../Tethering_FTPD_Multi-IP.zip .
-                  cd ..
-
-            - name: Create Release
+            - name: Inject additional IPs for Multi-IP module
+              if: github.event_name == 'workflow_dispatch' && inputs.extra_ips != ''
               env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  IS_DRAFT: ${{ (github.event_name == 'workflow_dispatch' && inputs.draft == true) && 'true' || 'false' }}
+                  EXTRA_IPS: ${{ inputs.extra_ips }}
               run: |
-                  # コミットハッシュの先頭7文字を使ってタグを被らせないようにするぞ
-                  TAG="${VERSION}-${GITHUB_SHA::7}"
-                  
-                  DRAFT_FLAG=""
-                  if [ "$IS_DRAFT" = "true" ]; then
-                      DRAFT_FLAG="--draft"
+                  set -eu
+                  python3 - <<'PY'
+                  import os
+                  from pathlib import Path
+
+                  extra_ips = " ".join(os.environ["EXTRA_IPS"].split())
+                  allowed = set("0123456789.xX*/ ")
+                  if any(char not in allowed for char in extra_ips):
+                      raise SystemExit("Invalid extra_ips: only IPv4 patterns, spaces, and / * x X are allowed")
+                  path = Path("Tethering_FTPD_Multi-IP/ftpd.service")
+                  source = path.read_text(encoding="utf-8")
+                  needle = 'TARGET_IPS="'
+                  if needle not in source:
+                      raise SystemExit("TARGET_IPS definition not found")
+                  path.write_text(source.replace(needle, needle + extra_ips + " ", 1), encoding="utf-8")
+                  PY
+
+            - name: Validate and build both module ZIPs
+              run: |
+                  set -eu
+
+                  for script in module/*.sh Tethering_FTPD_Multi-IP/*.sh Tethering_FTPD_Multi-IP/*.service Tethering_FTPD_Multi-IP/*.inotify; do
+                      sh -n "$script"
+                  done
+
+                  (
+                      cd module
+                      zip -r9 ../FTPD-Tailscale.zip .
+                  )
+                  (
+                      cd Tethering_FTPD_Multi-IP
+                      zip -r9 ../Tethering_FTPD_Multi-IP.zip .
+                  )
+
+                  unzip -t FTPD-Tailscale.zip
+                  unzip -t Tethering_FTPD_Multi-IP.zip
+
+                  test "$(unzip -p FTPD-Tailscale.zip module.prop | sed -n 's/^id=//p')" = "ftpd-tailscale"
+                  test "$(unzip -p Tethering_FTPD_Multi-IP.zip module.prop | sed -n 's/^id=//p')" = "tethering-ftpd-inotify"
+
+            - name: Upload both module ZIPs as one build artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: FTPD-Modules
+                  path: |
+                      FTPD-Tailscale.zip
+                      Tethering_FTPD_Multi-IP.zip
+                  if-no-files-found: error
+
+            - name: Publish one GitHub Release with both modules
+              if: github.event_name != 'pull_request'
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  IS_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true && 'true' || 'false' }}
+                  EXTRA_IPS: ${{ github.event_name == 'workflow_dispatch' && inputs.extra_ips || '' }}
+              run: |
+                  set -eu
+
+                  TAILSCALE_VERSION="$(sed -n 's/^version=//p' module/module.prop | tr -d '\r')"
+                  MULTI_VERSION="$(sed -n 's/^version=//p' Tethering_FTPD_Multi-IP/module.prop | tr -d '\r')"
+                  TAG="ftpd-modules-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
+                  TITLE="FTPD Modules (Tailscale ${TAILSCALE_VERSION} / Multi-IP ${MULTI_VERSION})"
+
+                  {
+                      printf '%s\n\n' '# FTPD Modules — combined release'
+                      printf '%s\n' '本リリースには独立した2種類のFTPモジュールが含まれています。'
+                      printf '%s\n' "- **FTPD-Tailscale.zip** — Tailscale / localhost FTP (${TAILSCALE_VERSION})"
+                      printf '%s\n' "- **Tethering_FTPD_Multi-IP.zip** — 指定IP・サブネットFTP (${MULTI_VERSION})"
+                      printf '\nCommit: \`%s\`\n' "$GITHUB_SHA"
+                      if [ -n "$EXTRA_IPS" ]; then
+                          printf '\nMulti-IPに追加した対象IP: \`%s\`\n' "$EXTRA_IPS"
+                      fi
+                  } > release-notes.md
+
+                  if gh release view "$TAG" >/dev/null 2>&1; then
+                      gh release upload "$TAG" FTPD-Tailscale.zip Tethering_FTPD_Multi-IP.zip --clobber
+                      gh release edit "$TAG" --title "$TITLE" --notes-file release-notes.md
+                      if [ "$IS_DRAFT" = "false" ]; then
+                          gh release edit "$TAG" --draft=false --latest
+                      fi
+                  elif [ "$IS_DRAFT" = "true" ]; then
+                      gh release create "$TAG" FTPD-Tailscale.zip Tethering_FTPD_Multi-IP.zip \
+                          --target "$GITHUB_SHA" \
+                          --draft --latest=false \
+                          --title "$TITLE" \
+                          --notes-file release-notes.md
+                  else
+                      gh release create "$TAG" FTPD-Tailscale.zip Tethering_FTPD_Multi-IP.zip \
+                          --target "$GITHUB_SHA" \
+                          --latest \
+                          --title "$TITLE" \
+                          --notes-file release-notes.md
                   fi
-                  
-                  # ghコマンドで自動的にリリースを作成してZIPをブチ込むのじゃ
-                  gh release create "$TAG" Tethering_FTPD_Multi-IP.zip \
-                      $DRAFT_FLAG \
-                      --title "Tethering FTPD Multi-IP $VERSION" \
-                      --notes "Automated release triggered by changes in Tethering_FTPD_Multi-IP folder."
+
+                  if [ "$IS_DRAFT" = "false" ]; then
+                      gh release edit "$TAG" --latest
+                      LATEST_TAG="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
+                      test "$LATEST_TAG" = "$TAG"
+                      echo "Verified Latest GitHub Release: $LATEST_TAG"
+                  fi
