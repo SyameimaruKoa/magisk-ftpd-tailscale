@@ -42,9 +42,92 @@ jobs:
         steps:
             - name: Checkout repository
               uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Remove confirmed duplicate ZIPs from older releases
+              if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  set -eu
+                  # 同じモジュールのソース一式が以前のReleaseと一致するZIPだけを対象にする。
+                  for item in \
+                      '412172150:638470641:FTPD-Tailscale.zip' \
+                      '412172150:638470643:Tethering_FTPD_Multi-IP.zip' \
+                      '424504154:678776768:Tethering_FTPD_Multi-IP.zip'; do
+                      release_id="${item%%:*}"
+                      remaining="${item#*:}"
+                      asset_id="${remaining%%:*}"
+                      expected_name="${remaining#*:}"
+                      name="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+                          --jq ".assets[] | select(.id == $asset_id) | .name")"
+                      if [ -z "$name" ]; then
+                          echo "Already removed: $asset_id"
+                      elif [ "$name" = "$expected_name" ]; then
+                          gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+                          echo "Removed duplicate: $expected_name ($asset_id)"
+                      else
+                          echo "Unexpected asset: $asset_id ($name)" >&2
+                          exit 1
+                      fi
+                  done
+
+            - name: Detect changes against last release per module
+              id: detect
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  EVENT_NAME: ${{ github.event_name }}
+                  EXTRA_IPS: ${{ github.event_name == 'workflow_dispatch' && inputs.extra_ips || '' }}
+              run: |
+                  set -eu
+                  gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/ftpd-releases.json"
+                  python3 - <<'PY'
+                  import json
+                  import os
+                  import subprocess
+
+                  with open(os.path.join(os.environ["RUNNER_TEMP"], "ftpd-releases.json"), encoding="utf-8") as stream:
+                      releases = json.load(stream)
+
+                  published = sorted(
+                      (release for release in releases if not release["draft"]),
+                      key=lambda release: release["published_at"] or "",
+                      reverse=True,
+                  )
+                  modules = {
+                      "tailscale": ("FTPD-Tailscale.zip", "module"),
+                      "multi": ("Tethering_FTPD_Multi-IP.zip", "Tethering_FTPD_Multi-IP"),
+                  }
+                  changed = {}
+                  for key, (filename, path) in modules.items():
+                      baseline = next(
+                          (
+                              release["tag_name"] for release in published
+                              if any(asset["name"] == filename for asset in release["assets"])
+                          ),
+                          None,
+                      )
+                      if baseline is None:
+                          changed[key] = True
+                          continue
+                      result = subprocess.run(["git", "diff", "--quiet", baseline, "HEAD", "--", path], check=False)
+                      if result.returncode > 1:
+                          raise SystemExit(f"Cannot compare {path} against release {baseline}")
+                      changed[key] = result.returncode == 1
+
+                  if os.environ["EVENT_NAME"] == "workflow_dispatch" and os.environ["EXTRA_IPS"].strip():
+                      changed["multi"] = True
+
+                  with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                      for key, value in changed.items():
+                          print(f"{key}={str(value).lower()}", file=output)
+                      print(f"any={str(any(changed.values())).lower()}", file=output)
+                  print("Selected module builds:", changed)
+                  PY
 
             - name: Inject additional IPs for Multi-IP module
-              if: github.event_name == 'workflow_dispatch' && inputs.extra_ips != ''
+              if: steps.detect.outputs.multi == 'true' && github.event_name == 'workflow_dispatch' && inputs.extra_ips != ''
               env:
                   EXTRA_IPS: ${{ inputs.extra_ips }}
               run: |
@@ -65,30 +148,40 @@ jobs:
                   path.write_text(source.replace(needle, needle + extra_ips + " ", 1), encoding="utf-8")
                   PY
 
-            - name: Validate and build both module ZIPs
+            - name: Validate and build selected ZIPs
+              if: steps.detect.outputs.any == 'true'
+              env:
+                  BUILD_TAILSCALE: ${{ steps.detect.outputs.tailscale }}
+                  BUILD_MULTI: ${{ steps.detect.outputs.multi }}
               run: |
                   set -eu
 
-                  for script in module/*.sh Tethering_FTPD_Multi-IP/*.sh Tethering_FTPD_Multi-IP/*.service Tethering_FTPD_Multi-IP/*.inotify; do
-                      sh -n "$script"
-                  done
+                  if [ "$BUILD_TAILSCALE" = true ]; then
+                      for script in module/*.sh; do
+                          sh -n "$script"
+                      done
+                      (
+                          cd module
+                          zip -r9 ../FTPD-Tailscale.zip .
+                      )
+                      unzip -t FTPD-Tailscale.zip
+                      test "$(unzip -p FTPD-Tailscale.zip module.prop | sed -n 's/^id=//p')" = "ftpd-tailscale"
+                  fi
 
-                  (
-                      cd module
-                      zip -r9 ../FTPD-Tailscale.zip .
-                  )
-                  (
-                      cd Tethering_FTPD_Multi-IP
-                      zip -r9 ../Tethering_FTPD_Multi-IP.zip .
-                  )
+                  if [ "$BUILD_MULTI" = true ]; then
+                      for script in Tethering_FTPD_Multi-IP/*.sh Tethering_FTPD_Multi-IP/*.service Tethering_FTPD_Multi-IP/*.inotify; do
+                          sh -n "$script"
+                      done
+                      (
+                          cd Tethering_FTPD_Multi-IP
+                          zip -r9 ../Tethering_FTPD_Multi-IP.zip .
+                      )
+                      unzip -t Tethering_FTPD_Multi-IP.zip
+                      test "$(unzip -p Tethering_FTPD_Multi-IP.zip module.prop | sed -n 's/^id=//p')" = "tethering-ftpd-inotify"
+                  fi
 
-                  unzip -t FTPD-Tailscale.zip
-                  unzip -t Tethering_FTPD_Multi-IP.zip
-
-                  test "$(unzip -p FTPD-Tailscale.zip module.prop | sed -n 's/^id=//p')" = "ftpd-tailscale"
-                  test "$(unzip -p Tethering_FTPD_Multi-IP.zip module.prop | sed -n 's/^id=//p')" = "tethering-ftpd-inotify"
-
-            - name: Upload both module ZIPs as one build artifact
+            - name: Upload selected module ZIPs as build artifacts
+              if: steps.detect.outputs.any == 'true'
               uses: actions/upload-artifact@v4
               with:
                   name: FTPD-Modules
@@ -97,52 +190,63 @@ jobs:
                       Tethering_FTPD_Multi-IP.zip
                   if-no-files-found: error
 
-            - name: Publish one GitHub Release with both modules
-              if: github.event_name != 'pull_request'
+            - name: Publish Release with changed modules only
+              if: github.event_name != 'pull_request' && steps.detect.outputs.any == 'true'
               env:
                   GH_TOKEN: ${{ github.token }}
                   IS_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true && 'true' || 'false' }}
                   EXTRA_IPS: ${{ github.event_name == 'workflow_dispatch' && inputs.extra_ips || '' }}
+                  BUILD_TAILSCALE: ${{ steps.detect.outputs.tailscale }}
+                  BUILD_MULTI: ${{ steps.detect.outputs.multi }}
               run: |
                   set -eu
-
-                  TAILSCALE_VERSION="$(sed -n 's/^version=//p' module/module.prop | tr -d '\r')"
-                  MULTI_VERSION="$(sed -n 's/^version=//p' Tethering_FTPD_Multi-IP/module.prop | tr -d '\r')"
                   TAG="ftpd-modules-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
-                  TITLE="FTPD Modules (Tailscale ${TAILSCALE_VERSION} / Multi-IP ${MULTI_VERSION})"
+                  ASSETS=()
+                  VERSIONS=()
 
                   {
-                      printf '%s\n\n' '# FTPD Modules — combined release'
-                      printf '%s\n' '本リリースには独立した2種類のFTPモジュールが含まれています。'
-                      printf '%s\n' "- **FTPD-Tailscale.zip** — Tailscale / localhost FTP (${TAILSCALE_VERSION})"
-                      printf '%s\n' "- **Tethering_FTPD_Multi-IP.zip** — 指定IP・サブネットFTP (${MULTI_VERSION})"
-                      printf '\nCommit: \`%s\`\n' "$GITHUB_SHA"
+                      printf '%s\n\n' '# FTPD Modules — changed modules only'
+                      printf '%s\n' '更新されたモジュールのZIPのみ収録しています。'
+                      if [ "$BUILD_TAILSCALE" = true ]; then
+                          TAILSCALE_VERSION="$(sed -n 's/^version=//p' module/module.prop | tr -d '\r')"
+                          ASSETS+=("FTPD-Tailscale.zip")
+                          VERSIONS+=("Tailscale $TAILSCALE_VERSION")
+                          printf '%s\n' "- **FTPD-Tailscale.zip** — Tailscale / localhost FTP ($TAILSCALE_VERSION)"
+                      fi
+                      if [ "$BUILD_MULTI" = true ]; then
+                          MULTI_VERSION="$(sed -n 's/^version=//p' Tethering_FTPD_Multi-IP/module.prop | tr -d '\r')"
+                          ASSETS+=("Tethering_FTPD_Multi-IP.zip")
+                          VERSIONS+=("Multi-IP $MULTI_VERSION")
+                          printf '%s\n' "- **Tethering_FTPD_Multi-IP.zip** — 指定IP・サブネットFTP ($MULTI_VERSION)"
+                      fi
+                      printf '\nCommit: \x60%s\x60\n' "$GITHUB_SHA"
                       if [ -n "$EXTRA_IPS" ]; then
-                          printf '\nMulti-IPに追加した対象IP: \`%s\`\n' "$EXTRA_IPS"
+                          printf '\nMulti-IPに追加した対象IP: \x60%s\x60\n' "$EXTRA_IPS"
                       fi
                   } > release-notes.md
 
+                  TITLE="FTPD Modules (${VERSIONS[*]})"
                   if gh release view "$TAG" >/dev/null 2>&1; then
-                      gh release upload "$TAG" FTPD-Tailscale.zip Tethering_FTPD_Multi-IP.zip --clobber
+                      gh release upload "$TAG" "${ASSETS[@]}" --clobber
                       gh release edit "$TAG" --title "$TITLE" --notes-file release-notes.md
-                      if [ "$IS_DRAFT" = "false" ]; then
+                      if [ "$IS_DRAFT" = false ]; then
                           gh release edit "$TAG" --draft=false --latest
                       fi
-                  elif [ "$IS_DRAFT" = "true" ]; then
-                      gh release create "$TAG" FTPD-Tailscale.zip Tethering_FTPD_Multi-IP.zip \
+                  elif [ "$IS_DRAFT" = true ]; then
+                      gh release create "$TAG" "${ASSETS[@]}" \
                           --target "$GITHUB_SHA" \
                           --draft --latest=false \
                           --title "$TITLE" \
                           --notes-file release-notes.md
                   else
-                      gh release create "$TAG" FTPD-Tailscale.zip Tethering_FTPD_Multi-IP.zip \
+                      gh release create "$TAG" "${ASSETS[@]}" \
                           --target "$GITHUB_SHA" \
                           --latest \
                           --title "$TITLE" \
                           --notes-file release-notes.md
                   fi
 
-                  if [ "$IS_DRAFT" = "false" ]; then
+                  if [ "$IS_DRAFT" = false ]; then
                       gh release edit "$TAG" --latest
                       LATEST_TAG="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
                       test "$LATEST_TAG" = "$TAG"
