@@ -45,53 +45,6 @@ jobs:
               with:
                   fetch-depth: 0
 
-            - name: Correct titles and notes on previously cleaned releases
-              if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-              env:
-                  GH_TOKEN: ${{ github.token }}
-              run: |
-                  set -eu
-                  CURRENT_TAG="ftpd-modules-11-d3f99bc"
-                  OLD_TAG="ftpd-modules-9-46a3a43"
-
-                  CURRENT_ASSETS="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$CURRENT_TAG" --jq '[.assets[].name] | sort | join(",")')"
-                  OLD_ASSETS="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$OLD_TAG" --jq '[.assets[].name] | sort | join(",")')"
-                  test "$CURRENT_ASSETS" = "FTPD-Tailscale.zip"
-                  test -z "$OLD_ASSETS"
-
-                  cat > "$RUNNER_TEMP/current-release-notes.md" <<'NOTES'
-                  # FTPD Tailscale v1.1.0
-
-                  Android向けroot FTPサーバーのTailscale / localhost版。
-
-                  ## 更新内容
-                  - Magisk・KernelSU・APatchのアクションから音量キーで操作：**音量上でFTPの一時停止・再開**、**音量下でMediaScan要求**。
-                  - FTPサーバーの転送処理は変更せず、MediaScanは手動操作時のみ実行。ファイル監視の常駐処理は追加していません。
-                  - ftpd.sh scan でMediaScanを手動要求可能。Android 15でscan_fileは検証済みですが、scan_volumeと音量キー操作は実機での動作確認が必要です。
-
-                  ## 配布ファイル
-                  - **FTPD-Tailscale.zip** — FTPD Tailscale v1.1.0
-
-                  **このReleaseにMulti-IP版のZIPは含まれません。** Multi-IP版は[専用のRelease](https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases/tag/v2.0-b0f389e)から取得してください。
-
-                  ソース: d3f99bcc783b9ffdd3f497426ad43de41890d91c
-                  NOTES
-
-                  cat > "$RUNNER_TEMP/old-release-notes.md" <<'NOTES'
-                  # 旧統合Release（ZIP配布終了）
-
-                  このReleaseに添付されていたZIPは、過去に公開した各モジュールと同内容だったため重複整理で削除しました。**現在、このReleaseにはダウンロードできるZIPがありません。**
-
-                  - [FTPD Tailscale v1.0.0](https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases/tag/ftpd-tailscale-latest)
-                  - [Tethering FTPD Multi-IP v2.0](https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases/tag/v2.0-b0f389e)
-                  - [現行Release一覧](https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases)
-
-                  記録用のタグ・Releaseはそのまま保持しています。
-                  NOTES
-
-                  gh release edit "$CURRENT_TAG" --title "FTPD Tailscale v1.1.0" --notes-file "$RUNNER_TEMP/current-release-notes.md"
-                  gh release edit "$OLD_TAG" --title "旧統合Release（ZIP配布終了）" --notes-file "$RUNNER_TEMP/old-release-notes.md"
-
             - name: Detect changes against last release per module
               id: detect
               env:
