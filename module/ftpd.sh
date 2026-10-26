@@ -3,7 +3,7 @@
 MODDIR=${0%/*}
 RUNDIR="$MODDIR/run"
 PID_MONITOR="$RUNDIR/monitor.pid"
-DESCRIPTION='FTP (Tailscale/localhost、21: 内部ストレージ / 2121: ルート)。アクションで一時停止・再開。'
+DESCRIPTION='FTP (Tailscale/localhost、21: 内部ストレージ / 2121: ルート)。アクション: 音量上でFTP切替、音量下でMediaScan。'
 
 # 管理方式に応じて各マネージャー内蔵のBusyBoxを利用する。
 find_busybox() {
@@ -240,6 +240,26 @@ flip_pause() {
     print_status
 }
 
+# 手動実行時のみ共有ストレージをスキャン。転送中の自動監視や常駐処理は設けない。
+scan_media() {
+    echo '共有ストレージ(external_primary)のMediaScanを要求するのじゃ。'
+    RESULT=$(/system/bin/content call --uri content://media --method scan_volume --arg external_primary 2>&1)
+    RESULT_CODE=$?
+    if [ "$RESULT_CODE" -ne 0 ]; then
+        printf 'MediaScanの要求に失敗: %s\n' "$RESULT" >&2
+        return 1
+    fi
+    case "$RESULT" in
+        'Result: Bundle['*)
+            echo 'MediaScanを要求したぞ。実際の走査はAndroid側で続行されるのじゃ。'
+            ;;
+        *)
+            printf 'MediaProviderから正常な応答がなかった: %s\n' "$RESULT" >&2
+            return 1
+            ;;
+    esac
+}
+
 show_help() {
     cat <<'HELP'
 使い方: ftpd.sh <コマンド>
@@ -248,7 +268,8 @@ show_help() {
     status      現在のFTP稼働状態、待受アドレスと公開ディレクトリを表示
     enable      FTPを有効化（モジュール全体の無効化は解除しない）
     disable     FTPを停止（設定は再起動後も保持）
-    toggle      FTPの有効/無効を切り替え、状態を表示（管理画面のアクション用）
+    toggle      FTPの有効/無効を切り替え、状態を表示
+    scan        共有ストレージのMediaScanを手動実行（転送とは独立）
     monitor     起動時の監視プロセスを開始（service.sh専用）
     -h, --help  このヘルプを表示
 
@@ -276,6 +297,9 @@ case "$1" in
         ;;
     toggle)
         flip_pause
+        ;;
+    scan)
+        scan_media
         ;;
     -h|--help|'')
         show_help
