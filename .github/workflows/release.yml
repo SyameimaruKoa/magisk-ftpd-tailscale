@@ -45,6 +45,27 @@ jobs:
               with:
                   fetch-depth: 0
 
+            - name: Update FTPD Tailscale v1.1.0 release notes
+              if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  set -eu
+                  TAG='ftpd-modules-11-d3f99bc'
+                  FILES="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '[.assets[].name] | sort | join(",")')"
+                  test "$FILES" = 'FTPD-Tailscale.zip'
+                  cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+                  ## 更新内容
+
+                  - アクションの音量上：FTPの一時停止・再開
+                  - アクションの音量下：MediaScan
+                  - `ftpd.sh scan`による手動スキャンを追加
+
+                  ## 配布ファイル
+
+                  - `FTPD-Tailscale.zip`
+                  NOTES
+                  gh release edit "$TAG" --title 'FTPD Tailscale v1.1.0' --notes-file "$RUNNER_TEMP/release-notes.md"
             - name: Detect changes against last release per module
               id: detect
               env:
