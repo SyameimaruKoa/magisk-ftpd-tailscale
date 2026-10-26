@@ -199,14 +199,12 @@ su -c 'rm -f /data/adb/modules/ftpd-tailscale/enable_tun_fix'
 
 多数のファイルの書き込み等はあまり安定しないのでFTPを使うのは大いにあり。
 
-## 共通のGitHub Release
+## GitHub Release
 
-- 更新があった場合は、Tailscale版とMulti-IP版のZIPを**同じリリースへまとめて**配布します。
-- 公開リリースにはGitHubの**Latest**指定を明示的に付けます。下記から両方のZIPを入手できます。
-- [最新の統合リリース](https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases/latest)
-- [Tailscale版の最新ZIP](https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases/latest/download/FTPD-Tailscale.zip)
-- [Multi-IP版の最新ZIP](https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases/latest/download/Tethering_FTPD_Multi-IP.zip)
-- ワークフローの手動実行ではMulti-IP版への追加IP設定、ドラフト作成を従来どおり利用できます。ドラフトにはLatest指定を付けません。
+- **前回そのモジュールを公開したReleaseから変更があったZIPのみ**ビルド・添付します。片方が未更新ならそのZIPは含めません。
+- 公開リリースには**Latest**指定を付けます。ただしLatestに両方のZIPがあるとは限りません。
+- [Release一覧](https://github.com/SyameimaruKoa/magisk-ftpd-tailscale/releases)から必要なモジュール名のZIPを選んでください。
+- ワークフローの手動実行ではMulti-IP版への追加IP設定、ドラフト作成を従来どおり利用できます。追加IPを指定した場合はMulti-IP版をビルドします。ドラフトにはLatest指定を付けません。
 
 ## その他の既存コード
 
