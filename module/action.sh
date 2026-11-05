@@ -11,7 +11,7 @@ show_help() {
     音量上: FTPのみ一時停止・再開（従来のtoggle）
     音量下: 共有ストレージ(external_primary)のMediaStore再スキャンを要求
 
-スキャンはボタンを押した場合に限って実行する。FTPの転送処理は変更しない。
+スキャンは手動実行に加え、全FTPクライアント切断後10秒間の無接続を確認すると自動実行する。
 FTPの状態確認・切替はftpd.sh status/enable/disable/toggleからも実行できる。
 
 オプション:

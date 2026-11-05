@@ -118,10 +118,10 @@ start_servers() {
     fi
     echo "$BIND_IP" > "$RUNDIR/bind.ip"
     if [ "$MODE" = tailscale ]; then
-        "$BBOX" tcpsvd -vE "$BIND_IP" 21 "$BBOX" ftpd -w -A /storage/emulated/0 >/dev/null 2>&1 &
+        "$BBOX" tcpsvd -vE "$BIND_IP" 21 "$MODDIR/ftpd-session.sh" "$BBOX" /storage/emulated/0 >/dev/null 2>&1 &
         echo "$!" > "$RUNDIR/21.pid"
     fi
-    "$BBOX" tcpsvd -vE "$BIND_IP" 2121 "$BBOX" ftpd -w -A / >/dev/null 2>&1 &
+    "$BBOX" tcpsvd -vE "$BIND_IP" 2121 "$MODDIR/ftpd-session.sh" "$BBOX" / >/dev/null 2>&1 &
     echo "$!" > "$RUNDIR/2121.pid"
     rm -f "$RUNDIR/starting"
 }
@@ -176,6 +176,31 @@ publish_status() {
     fi
 }
 
+# 両ポートのFTPセッションと確立中のTCP接続をまとめて調べる。
+ftp_sessions_active() {
+    for SESSION_FILE in "$RUNDIR"/sessions/*.pid; do
+        [ -f "$SESSION_FILE" ] || continue
+        SESSION_PID=${SESSION_FILE##*/}
+        SESSION_PID=${SESSION_PID%.pid}
+        if valid_pid "$SESSION_PID" "$MODDIR/ftpd-session.sh"; then
+            return 0
+        fi
+        rm -f "$SESSION_FILE"
+    done
+
+    # tcpsvdが受け付けてからセッション登録されるまでの隙間も検知する。
+    # LISTEN(0A)、TIME_WAIT(06)、CLOSE(07)は切断済みとして扱う。
+    [ -r /proc/net/tcp ] || return 0
+    "$BBOX" awk '
+        NR > 1 && $2 ~ /:(0015|0849)$/ && $4 != "0A" && $4 != "06" && $4 != "07" {
+            active=1
+            exit
+        }
+        END { exit(active ? 0 : 1) }
+    ' /proc/net/tcp
+    [ "$?" -ne 1 ]
+}
+
 monitor() {
     if ! find_busybox; then
         echo 'BusyBoxが見つかりません' >&2
@@ -185,8 +210,14 @@ monitor() {
     if monitor_alive; then
         return 0
     fi
-    echo "$$" > "$PID_MONITOR"
+    echo "$" > "$PID_MONITOR"
+    if [ -f "$RUNDIR/scan.running" ]; then
+        touch "$RUNDIR/scan.pending"
+        rm -f "$RUNDIR/scan.running"
+    fi
     LAST_ENABLED=0
+    QUIET_SINCE=0
+    NEXT_SCAN_RETRY=0
     while :; do
         if [ -f "$MODDIR/disable" ] || [ -f "$MODDIR/remove" ] || [ -f "$MODDIR/paused" ]; then
             if [ "$LAST_ENABLED" -eq 1 ]; then
@@ -201,6 +232,33 @@ monitor() {
                     LAST_ENABLED=0
                 fi
             fi
+        fi
+        # 全クライアントの切断後、10秒間セッションとTCP接続がゼロならスキャンする。
+        if [ -f "$RUNDIR/scan.pending" ]; then
+            if ftp_sessions_active; then
+                QUIET_SINCE=0
+            else
+                NOW=$(date +%s)
+                if [ "$QUIET_SINCE" -eq 0 ]; then
+                    QUIET_SINCE="$NOW"
+                elif [ $((NOW - QUIET_SINCE)) -ge 10 ] && [ "$NOW" -ge "$NEXT_SCAN_RETRY" ]; then
+                    if ! ftp_sessions_active && mv "$RUNDIR/scan.pending" "$RUNDIR/scan.running" 2>/dev/null; then
+                        if ftp_sessions_active; then
+                            touch "$RUNDIR/scan.pending"
+                        elif scan_media > "$RUNDIR/scan.log" 2>&1; then
+                            date '+%Y-%m-%d %H:%M:%S' > "$RUNDIR/scan.last"
+                            NEXT_SCAN_RETRY=0
+                        else
+                            touch "$RUNDIR/scan.pending"
+                            NEXT_SCAN_RETRY=$((NOW + 60))
+                        fi
+                        rm -f "$RUNDIR/scan.running"
+                    fi
+                    QUIET_SINCE=0
+                fi
+            fi
+        else
+            QUIET_SINCE=0
         fi
         publish_status
         sleep 2
@@ -222,6 +280,12 @@ print_status() {
     else
         echo '127.0.0.1:2121/tcp -> /'
     fi
+    if [ -f "$RUNDIR/scan.pending" ]; then
+        echo '自動MediaScan: 全FTP接続の切断と10秒間の無接続待ち'
+    fi
+    if [ -f "$RUNDIR/scan.last" ]; then
+        printf '最終自動MediaScan要求: %s\n' "$(cat "$RUNDIR/scan.last")"
+    fi
 }
 
 flip_pause() {
@@ -240,7 +304,7 @@ flip_pause() {
     print_status
 }
 
-# 手動実行時のみ共有ストレージをスキャン。転送中の自動監視や常駐処理は設けない。
+# 手動実行および全FTPセッション切断後の自動実行で共用する。
 scan_media() {
     echo '共有ストレージ(external_primary)のMediaScanを要求するのじゃ。'
     RESULT=$(/system/bin/content call --uri content://media --method scan_volume --arg external_primary 2>&1)
@@ -269,7 +333,7 @@ show_help() {
     enable      FTPを有効化（モジュール全体の無効化は解除しない）
     disable     FTPを停止（設定は再起動後も保持）
     toggle      FTPの有効/無効を切り替え、状態を表示
-    scan        共有ストレージのMediaScanを手動実行（転送とは独立）
+    scan        共有ストレージのMediaScanを即時に手動実行（自動スキャンとは独立）
     monitor     起動時の監視プロセスを開始（service.sh専用）
     -h, --help  このヘルプを表示
 
