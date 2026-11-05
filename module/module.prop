@@ -1,6 +1,6 @@
 id=ftpd-tailscale
 name=FTPD Tailscale
-version=v1.1.0
-versionCode=2
+version=v1.2.0
+versionCode=3
 author=SyameimaruKoa
 description=[FTP: 起動待ち] FTP (Tailscale/localhost、21: 内部ストレージ / 2121: ルート)。アクション: 音量上でFTP切替、音量下でMediaScan。
